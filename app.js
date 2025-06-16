@@ -1,9 +1,9 @@
-const client = mqtt.connect("ws://localhost:9001");
+const client = mqtt.connect("wss://broker.hivemq.com:8884/mqtt");
 
-let playerList = []; // { uid: "UID123", name: "", balance: 1500 }
+let playerList = []; // { uid: "UID123", name: "Player 1", balance: 1500 }
+let transactionHistory = [];
 let initiatorUID = null;
 let targetUID = null;
-let transactionHistory = [];
 
 client.on("connect", () => {
   console.log("Connected to MQTT");
@@ -20,22 +20,15 @@ $(document).ready(() => {
   renderChart();
   updateTable();
 
- $("#newGameBtn").click(() => {
-  // Clear everything
-  playerList = [];
-  initiatorUID = null;
-  targetUID = null;
-  localStorage.removeItem("playerList");
-  localStorage.removeItem("transactionHistory");
-
-  // Reset chart and table
-  if (window.balanceChart) window.balanceChart.destroy();
-  $("#playerTableBody").empty();
-  $("#cardUIDList").empty();
-
-  // Show card tapping modal
-  new bootstrap.Modal(document.getElementById("tapCardsModal")).show();
-});
+  $("#newGameBtn").click(() => {
+    playerList = [];
+    transactionHistory = [];
+    localStorage.removeItem("playerList");
+    localStorage.removeItem("transactionHistory");
+    $("#cardUIDList").empty();
+    const modal = bootstrap.Modal.getOrCreateInstance(document.getElementById("tapCardsModal"));
+    modal.show();
+  });
 
   $("#proceedToNames").click(() => {
     let inputs = "";
@@ -79,8 +72,20 @@ $(document).ready(() => {
     initiatorUID = targetUID = null;
   });
 
-  $("#undoBtn").click(() => {
-    undoTransaction();
+  $("#undoTxnBtn").click(() => {
+    if (transactionHistory.length > 0) {
+      const last = transactionHistory.pop();
+      if (last.type === "pay") {
+        last.p1.balance += last.amount;
+        if (last.p2) last.p2.balance -= last.amount;
+      } else {
+        last.p1.balance -= last.amount;
+        if (last.p2) last.p2.balance += last.amount;
+      }
+      saveToLocal();
+      renderChart();
+      updateTable();
+    }
   });
 });
 
@@ -111,10 +116,7 @@ function applyTransaction(uid1, uid2, type, amount) {
   const p1 = playerList.find(p => p.uid === uid1);
   const p2 = uid2 ? playerList.find(p => p.uid === uid2) : null;
 
-  // Store history before applying
-  const snapshot = JSON.stringify(playerList);
-  transactionHistory.push(snapshot);
-  localStorage.setItem("transactionHistory", JSON.stringify(transactionHistory));
+  transactionHistory.push({ p1, p2, type, amount });
 
   if (type === "pay") {
     p1.balance -= amount;
@@ -129,20 +131,12 @@ function applyTransaction(uid1, uid2, type, amount) {
   updateTable();
 }
 
-function undoTransaction() {
-  if (transactionHistory.length === 0) return alert("No transaction to undo!");
-
-  const lastState = transactionHistory.pop();
-  playerList = JSON.parse(lastState);
-  saveToLocal();
-  renderChart();
-  updateTable();
-  localStorage.setItem("transactionHistory", JSON.stringify(transactionHistory));
-}
-
 function renderChart() {
   const ctx = document.getElementById("balanceChart").getContext("2d");
-  if (window.balanceChart) window.balanceChart.destroy();
+  if (window.balanceChart && typeof window.balanceChart.destroy === "function") {
+    window.balanceChart.destroy();
+  }
+
   window.balanceChart = new Chart(ctx, {
     type: "bar",
     data: {
@@ -153,11 +147,38 @@ function renderChart() {
         backgroundColor: "#4e73df"
       }]
     },
-    options: { scales: { y: { beginAtZero: true } } }
+    options: {
+      responsive: true,
+      scales: {
+        y: {
+          beginAtZero: true
+        }
+      }
+    }
   });
 }
 
 function updateTable() {
   const tbody = playerList.map(p => `<tr><td>${p.name}</td><td>₹${p.balance}</td></tr>`).join("");
   $("#playerTableBody").html(tbody);
+}
+
+function saveToLocal() {
+  localStorage.setItem("playerList", JSON.stringify(playerList));
+  localStorage.setItem("transactionHistory", JSON.stringify(transactionHistory));
+}
+
+function loadFromLocal() {
+  const data = localStorage.getItem("playerList");
+  if (data) {
+    playerList = JSON.parse(data);
+  }
+
+  const txns = localStorage.getItem("transactionHistory");
+  if (txns) {
+    transactionHistory = JSON.parse(txns);
+  }
+
+  renderChart();
+  updateTable();
 }
