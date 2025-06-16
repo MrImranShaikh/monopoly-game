@@ -8,6 +8,7 @@ class MonopolyDashboard {
         this.currentTransaction = null;
         this.transactionHistory = [];
         this.chart = null;
+        this.currentAmount = 0;
         
         this.init();
     }
@@ -59,8 +60,11 @@ class MonopolyDashboard {
             });
         });
 
-        document.getElementById('transactionAmount').addEventListener('input', () => {
-            this.validateTransactionForm();
+        // Virtual keypad event listeners
+        document.querySelectorAll('.keypad-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                this.handleKeypadInput(e.target.dataset.value);
+            });
         });
     }
 
@@ -284,6 +288,9 @@ class MonopolyDashboard {
             waitingForSecondPlayer: false
         };
         
+        this.currentAmount = 0;
+        document.getElementById('amountDisplay').textContent = '₹0';
+        
         document.getElementById('transactionPlayerName').textContent = `Player: ${player.name}`;
         document.getElementById('transactionStep1').style.display = 'block';
         document.getElementById('transactionStep2').style.display = 'none';
@@ -294,7 +301,6 @@ class MonopolyDashboard {
         // Reset form
         document.querySelectorAll('input[name="transactionType"]').forEach(radio => radio.checked = false);
         document.querySelectorAll('input[name="transactionWith"]').forEach(radio => radio.checked = false);
-        document.getElementById('transactionAmount').value = '';
         document.getElementById('nextStepBtn').disabled = true;
         
         const transactionModal = new bootstrap.Modal(document.getElementById('transactionModal'));
@@ -304,20 +310,18 @@ class MonopolyDashboard {
     validateTransactionForm() {
         const type = document.querySelector('input[name="transactionType"]:checked');
         const withOption = document.querySelector('input[name="transactionWith"]:checked');
-        const amount = document.getElementById('transactionAmount').value;
         
-        const isValid = type && withOption && amount && parseFloat(amount) > 0;
+        const isValid = type && withOption && this.currentAmount > 0;
         document.getElementById('nextStepBtn').disabled = !isValid;
     }
 
     nextTransactionStep() {
         const type = document.querySelector('input[name="transactionType"]:checked').value;
         const withOption = document.querySelector('input[name="transactionWith"]:checked').value;
-        const amount = parseFloat(document.getElementById('transactionAmount').value);
         
         this.currentTransaction.type = type;
         this.currentTransaction.with = withOption;
-        this.currentTransaction.amount = amount;
+        this.currentTransaction.amount = this.currentAmount;
         
         if (withOption === 'bank') {
             // Direct transaction with bank
@@ -347,20 +351,21 @@ class MonopolyDashboard {
         document.getElementById('transactionStep1').style.display = 'none';
         document.getElementById('transactionStep2').style.display = 'none';
         document.getElementById('transactionConfirmation').style.display = 'block';
+        document.getElementById('nextStepBtn').style.display = 'none';
         document.getElementById('confirmTransactionBtn').style.display = 'inline-block';
         
         let summary = '';
         if (withOption === 'bank') {
             if (type === 'pay') {
-                summary = `<strong>${initiator.name}</strong> pays <span class="currency">₹${amount}</span> to the Bank`;
+                summary = `<strong>${initiator.name}</strong> pays <span class="currency">₹${amount.toLocaleString()}</span> to the Bank`;
             } else {
-                summary = `<strong>${initiator.name}</strong> receives <span class="currency">₹${amount}</span> from the Bank`;
+                summary = `<strong>${initiator.name}</strong> receives <span class="currency">₹${amount.toLocaleString()}</span> from the Bank`;
             }
         } else {
             if (type === 'pay') {
-                summary = `<strong>${initiator.name}</strong> pays <span class="currency">₹${amount}</span> to <strong>${secondPlayer.name}</strong>`;
+                summary = `<strong>${initiator.name}</strong> pays <span class="currency">₹${amount.toLocaleString()}</span> to <strong>${secondPlayer.name}</strong>`;
             } else {
-                summary = `<strong>${initiator.name}</strong> receives <span class="currency">₹${amount}</span> from <strong>${secondPlayer.name}</strong>`;
+                summary = `<strong>${initiator.name}</strong> receives <span class="currency">₹${amount.toLocaleString()}</span> from <strong>${secondPlayer.name}</strong>`;
             }
         }
         
@@ -610,6 +615,27 @@ class MonopolyDashboard {
             this.transactionHistory = [];
         }
     }
+
+    handleKeypadInput(value) {
+        const display = document.getElementById('amountDisplay');
+        
+        if (value === 'clear') {
+            this.currentAmount = 0;
+        } else {
+            // Append the digit to current amount
+            const currentStr = this.currentAmount.toString();
+            const newStr = currentStr + value;
+            this.currentAmount = parseInt(newStr) || 0;
+            
+            // Limit to reasonable amount (max 999999)
+            if (this.currentAmount > 999999) {
+                this.currentAmount = 999999;
+            }
+        }
+        
+        display.textContent = `₹${this.currentAmount.toLocaleString()}`;
+        this.validateTransactionForm();
+    }
 }
 
 // Initialize the game
@@ -617,3 +643,11 @@ let monopolyGame;
 document.addEventListener('DOMContentLoaded', () => {
     monopolyGame = new MonopolyDashboard();
 });
+
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('service-worker.js')
+      .then(reg => console.log("SW registered!", reg))
+      .catch(err => console.error("SW registration failed:", err));
+  });
+}
