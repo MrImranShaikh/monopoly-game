@@ -1,184 +1,619 @@
-const client = mqtt.connect("wss://broker.hivemq.com:8884/mqtt");
-
-let playerList = []; // { uid: "UID123", name: "Player 1", balance: 1500 }
-let transactionHistory = [];
-let initiatorUID = null;
-let targetUID = null;
-
-client.on("connect", () => {
-  console.log("Connected to MQTT");
-  client.subscribe("monopoly/card-tap");
-});
-
-client.on("message", (topic, message) => {
-  const { uid } = JSON.parse(message.toString());
-  handleCardTap(uid);
-});
-
-$(document).ready(() => {
-  loadFromLocal();
-  renderChart();
-  updateTable();
-
-  $("#newGameBtn").click(() => {
-    playerList = [];
-    transactionHistory = [];
-    localStorage.removeItem("playerList");
-    localStorage.removeItem("transactionHistory");
-    $("#cardUIDList").empty();
-    const modal = bootstrap.Modal.getOrCreateInstance(document.getElementById("tapCardsModal"));
-    modal.show();
-  });
-
-  $("#proceedToNames").click(() => {
-    let inputs = "";
-    playerList.forEach((p, i) => {
-      inputs += `<input class='form-control my-2' data-uid='${p.uid}' placeholder='Player ${i + 1} Name'>`;
-    });
-    $("#nameInputs").html(inputs);
-    bootstrap.Modal.getInstance(document.getElementById("tapCardsModal")).hide();
-    new bootstrap.Modal(document.getElementById("nameInputModal")).show();
-  });
-
-  $("#startGameBtn").click(() => {
-    $("#nameInputs input").each(function (i) {
-      const uid = $(this).data("uid");
-      const name = $(this).val().trim() || `Player ${i + 1}`;
-      playerList[i] = { uid, name, balance: 1500 };
-    });
-    saveToLocal();
-    renderChart();
-    updateTable();
-    bootstrap.Modal.getInstance(document.getElementById("nameInputModal")).hide();
-  });
-
-  $("#confirmTxnSetup").click(() => {
-    const amount = parseInt($("#txnAmount").val());
-    const type = $("input[name='txnType']:checked").val();
-    const target = $("#txnTarget").val();
-    if (target === "Bank") {
-      applyTransaction(initiatorUID, null, type, amount);
-      bootstrap.Modal.getInstance(document.getElementById("transactionInitModal")).hide();
-    } else {
-      // wait for second tap
+class MonopolyDashboard {
+    constructor() {
+        this.mqtt = null;
+        this.players = [];
+        this.gameState = 'idle'; // idle, setup, playing
+        this.setupPhase = 'cards'; // cards, names
+        this.registeredCards = [];
+        this.currentTransaction = null;
+        this.transactionHistory = [];
+        this.chart = null;
+        
+        this.init();
     }
-  });
 
-  $("#finalizeTxn").click(() => {
-    const amount = parseInt($("#txnAmount").val());
-    const type = $("input[name='txnType']:checked").val();
-    applyTransaction(initiatorUID, targetUID, type, amount);
-    bootstrap.Modal.getInstance(document.getElementById("transactionConfirmModal")).hide();
-    initiatorUID = targetUID = null;
-  });
-
-  $("#undoTxnBtn").click(() => {
-    if (transactionHistory.length > 0) {
-      const last = transactionHistory.pop();
-      if (last.type === "pay") {
-        last.p1.balance += last.amount;
-        if (last.p2) last.p2.balance -= last.amount;
-      } else {
-        last.p1.balance -= last.amount;
-        if (last.p2) last.p2.balance += last.amount;
-      }
-      saveToLocal();
-      renderChart();
-      updateTable();
+    init() {
+        this.loadGameData();
+        this.setupEventListeners();
+        this.connectMQTT();
+        this.updateUI();
     }
-  });
-});
 
-function handleCardTap(uid) {
-  if (!playerList.find(p => p.uid === uid)) {
-    playerList.push({ uid, name: `UID ${uid}`, balance: 1500 });
-    $("#cardUIDList").append(`<li class='list-group-item'>Card ${playerList.length}: ${uid}</li>`);
-    return;
-  }
+    setupEventListeners() {
+        // New Game button
+        document.getElementById('newGameBtn').addEventListener('click', () => {
+            this.startNewGame();
+        });
 
-  if (!initiatorUID) {
-    initiatorUID = uid;
-    const player = playerList.find(p => p.uid === uid);
-    $("#initiatorName").text(`Initiator: ${player.name}`);
-    new bootstrap.Modal(document.getElementById("transactionInitModal")).show();
-  } else if (!targetUID && uid !== initiatorUID) {
-    targetUID = uid;
-    const from = playerList.find(p => p.uid === initiatorUID);
-    const to = playerList.find(p => p.uid === targetUID);
-    const type = $("input[name='txnType']:checked").val();
-    const amt = $("#txnAmount").val();
-    $("#txnSummary").html(`${from.name} will ${type} ₹${amt} to/from ${to.name}`);
-    new bootstrap.Modal(document.getElementById("transactionConfirmModal")).show();
-  }
-}
+        // Undo button
+        document.getElementById('undoBtn').addEventListener('click', () => {
+            this.undoLastTransaction();
+        });
 
-function applyTransaction(uid1, uid2, type, amount) {
-  const p1 = playerList.find(p => p.uid === uid1);
-  const p2 = uid2 ? playerList.find(p => p.uid === uid2) : null;
+        // Setup modal buttons
+        document.getElementById('proceedToNames').addEventListener('click', () => {
+            this.proceedToPlayerNames();
+        });
 
-  transactionHistory.push({ p1, p2, type, amount });
+        document.getElementById('startGameBtn').addEventListener('click', () => {
+            this.startGame();
+        });
 
-  if (type === "pay") {
-    p1.balance -= amount;
-    if (p2) p2.balance += amount;
-  } else {
-    p1.balance += amount;
-    if (p2) p2.balance -= amount;
-  }
+        // Transaction modal buttons
+        document.getElementById('nextStepBtn').addEventListener('click', () => {
+            this.nextTransactionStep();
+        });
 
-  saveToLocal();
-  renderChart();
-  updateTable();
-}
+        document.getElementById('confirmTransactionBtn').addEventListener('click', () => {
+            this.confirmTransaction();
+        });
 
-function renderChart() {
-  const ctx = document.getElementById("balanceChart").getContext("2d");
-  if (window.balanceChart && typeof window.balanceChart.destroy === "function") {
-    window.balanceChart.destroy();
-  }
+        document.getElementById('cancelTransaction').addEventListener('click', () => {
+            this.cancelTransaction();
+        });
 
-  window.balanceChart = new Chart(ctx, {
-    type: "bar",
-    data: {
-      labels: playerList.map(p => p.name),
-      datasets: [{
-        label: "Balance",
-        data: playerList.map(p => p.balance),
-        backgroundColor: "#4e73df"
-      }]
-    },
-    options: {
-      responsive: true,
-      scales: {
-        y: {
-          beginAtZero: true
+        // Transaction form changes
+        document.querySelectorAll('input[name="transactionType"], input[name="transactionWith"]').forEach(radio => {
+            radio.addEventListener('change', () => {
+                this.validateTransactionForm();
+            });
+        });
+
+        document.getElementById('transactionAmount').addEventListener('input', () => {
+            this.validateTransactionForm();
+        });
+    }
+
+    connectMQTT() {
+        console.log('Connecting to MQTT broker...');
+        this.updateConnectionStatus(false);
+        
+        try {
+            this.mqtt = mqtt.connect('wss://broker.hivemq.com:8884/mqtt', {
+                clientId: 'monopoly_dashboard_' + Math.random().toString(36).substr(2, 9),
+                clean: true,
+                connectTimeout: 4000,
+                reconnectPeriod: 1000,
+            });
+
+            this.mqtt.on('connect', () => {
+                console.log('MQTT Connected');
+                this.updateConnectionStatus(true);
+                this.mqtt.subscribe('monopoly/card-tap', (err) => {
+                    if (err) {
+                        console.error('Subscription error:', err);
+                    } else {
+                        console.log('Subscribed to monopoly/card-tap');
+                    }
+                });
+            });
+
+            this.mqtt.on('message', (topic, message) => {
+                if (topic === 'monopoly/card-tap') {
+                    this.handleCardTap(message.toString());
+                }
+            });
+
+            this.mqtt.on('error', (error) => {
+                console.error('MQTT Error:', error);
+                this.updateConnectionStatus(false);
+            });
+
+            this.mqtt.on('offline', () => {
+                console.log('MQTT Offline');
+                this.updateConnectionStatus(false);
+            });
+
+            this.mqtt.on('reconnect', () => {
+                console.log('MQTT Reconnecting...');
+                this.updateConnectionStatus(false);
+            });
+
+        } catch (error) {
+            console.error('MQTT Connection Error:', error);
+            this.updateConnectionStatus(false);
         }
-      }
     }
-  });
+
+    updateConnectionStatus(connected) {
+        const badge = document.getElementById('connectionBadge');
+        if (connected) {
+            badge.className = 'badge badge-connected';
+            badge.innerHTML = '<i class="bi bi-wifi"></i> Connected';
+        } else {
+            badge.className = 'badge badge-disconnected';
+            badge.innerHTML = '<i class="bi bi-wifi-off"></i> Disconnected';
+        }
+    }
+
+    handleCardTap(message) {
+        try {
+            const data = JSON.parse(message);
+            const uid = data.uid;
+            console.log('Card tapped:', uid);
+
+            if (this.gameState === 'setup') {
+                this.handleSetupCardTap(uid);
+            } else if (this.gameState === 'playing') {
+                this.handleGameCardTap(uid);
+            }
+        } catch (error) {
+            console.error('Error parsing MQTT message:', error);
+        }
+    }
+
+    handleSetupCardTap(uid) {
+        if (this.setupPhase === 'cards') {
+            if (!this.registeredCards.find(card => card.uid === uid)) {
+                this.registeredCards.push({ uid });
+                this.updateCardRegistrationUI();
+            }
+        }
+    }
+
+    handleGameCardTap(uid) {
+        const player = this.players.find(p => p.uid === uid);
+        if (!player) {
+            this.showStatus('Unknown card tapped. Please register this card first.', 'warning');
+            return;
+        }
+
+        if (!this.currentTransaction) {
+            // Start new transaction
+            this.startTransaction(player);
+        } else if (this.currentTransaction.step === 2 && this.currentTransaction.waitingForSecondPlayer) {
+            // Second player for player-to-player transaction
+            if (uid === this.currentTransaction.initiator.uid) {
+                this.showStatus('Cannot select the same player twice!', 'warning');
+                return;
+            }
+            this.setSecondPlayer(player);
+        }
+    }
+
+    startNewGame() {
+        this.registeredCards = [];
+        this.players = [];
+        this.gameState = 'setup';
+        this.setupPhase = 'cards';
+        this.currentTransaction = null;
+        this.transactionHistory = [];
+        
+        // Reset UI
+        document.getElementById('cardRegistration').style.display = 'block';
+        document.getElementById('playerNames').style.display = 'none';
+        document.getElementById('proceedToNames').disabled = true;
+        document.getElementById('startGameBtn').style.display = 'none';
+        document.getElementById('registeredCards').innerHTML = '';
+        
+        // Show setup modal
+        const setupModal = new bootstrap.Modal(document.getElementById('setupModal'));
+        setupModal.show();
+    }
+
+    updateCardRegistrationUI() {
+        const container = document.getElementById('registeredCards');
+        container.innerHTML = '';
+        
+        this.registeredCards.forEach((card, index) => {
+            const cardDiv = document.createElement('div');
+            cardDiv.className = 'alert alert-success d-flex justify-content-between align-items-center mb-2';
+            cardDiv.innerHTML = `
+                <span><i class="bi bi-credit-card"></i> Card ${index + 1}: ${card.uid}</span>
+                <button class="btn btn-sm btn-outline-danger" onclick="monopolyGame.removeCard('${card.uid}')">
+                    <i class="bi bi-trash"></i>
+                </button>
+            `;
+            container.appendChild(cardDiv);
+        });
+        
+        document.getElementById('proceedToNames').disabled = this.registeredCards.length === 0;
+    }
+
+    removeCard(uid) {
+        this.registeredCards = this.registeredCards.filter(card => card.uid !== uid);
+        this.updateCardRegistrationUI();
+    }
+
+    proceedToPlayerNames() {
+        this.setupPhase = 'names';
+        document.getElementById('cardRegistration').style.display = 'none';
+        document.getElementById('playerNames').style.display = 'block';
+        
+        // Create name input fields
+        const container = document.getElementById('nameInputs');
+        container.innerHTML = '';
+        
+        this.registeredCards.forEach((card, index) => {
+            const inputGroup = document.createElement('div');
+            inputGroup.className = 'mb-3';
+            inputGroup.innerHTML = `
+                <label class="form-label">Player ${index + 1} (${card.uid}):</label>
+                <input type="text" class="form-control player-name-input" data-uid="${card.uid}" placeholder="Enter player name" required>
+            `;
+            container.appendChild(inputGroup);
+        });
+        
+        document.getElementById('startGameBtn').style.display = 'block';
+        
+        // Add validation
+        const inputs = container.querySelectorAll('.player-name-input');
+        inputs.forEach(input => {
+            input.addEventListener('input', () => {
+                const allFilled = Array.from(inputs).every(inp => inp.value.trim() !== '');
+                document.getElementById('startGameBtn').disabled = !allFilled;
+            });
+        });
+    }
+
+    startGame() {
+        // Collect player names
+        const nameInputs = document.querySelectorAll('.player-name-input');
+        this.players = [];
+        
+        nameInputs.forEach(input => {
+            const uid = input.dataset.uid;
+            const name = input.value.trim();
+            this.players.push({
+                uid,
+                name,
+                balance: 1500
+            });
+        });
+        
+        this.gameState = 'playing';
+        this.saveGameData();
+        
+        // Hide setup modal
+        const setupModal = bootstrap.Modal.getInstance(document.getElementById('setupModal'));
+        setupModal.hide();
+        
+        // Show dashboard
+        this.updateUI();
+        this.showStatus('Game started! Each player has ₹1500. Tap a card to begin transactions.', 'success');
+    }
+
+    startTransaction(player) {
+        this.currentTransaction = {
+            initiator: player,
+            step: 1,
+            type: null,
+            with: null,
+            amount: null,
+            secondPlayer: null,
+            waitingForSecondPlayer: false
+        };
+        
+        document.getElementById('transactionPlayerName').textContent = `Player: ${player.name}`;
+        document.getElementById('transactionStep1').style.display = 'block';
+        document.getElementById('transactionStep2').style.display = 'none';
+        document.getElementById('transactionConfirmation').style.display = 'none';
+        document.getElementById('nextStepBtn').style.display = 'inline-block';
+        document.getElementById('confirmTransactionBtn').style.display = 'none';
+        
+        // Reset form
+        document.querySelectorAll('input[name="transactionType"]').forEach(radio => radio.checked = false);
+        document.querySelectorAll('input[name="transactionWith"]').forEach(radio => radio.checked = false);
+        document.getElementById('transactionAmount').value = '';
+        document.getElementById('nextStepBtn').disabled = true;
+        
+        const transactionModal = new bootstrap.Modal(document.getElementById('transactionModal'));
+        transactionModal.show();
+    }
+
+    validateTransactionForm() {
+        const type = document.querySelector('input[name="transactionType"]:checked');
+        const withOption = document.querySelector('input[name="transactionWith"]:checked');
+        const amount = document.getElementById('transactionAmount').value;
+        
+        const isValid = type && withOption && amount && parseFloat(amount) > 0;
+        document.getElementById('nextStepBtn').disabled = !isValid;
+    }
+
+    nextTransactionStep() {
+        const type = document.querySelector('input[name="transactionType"]:checked').value;
+        const withOption = document.querySelector('input[name="transactionWith"]:checked').value;
+        const amount = parseFloat(document.getElementById('transactionAmount').value);
+        
+        this.currentTransaction.type = type;
+        this.currentTransaction.with = withOption;
+        this.currentTransaction.amount = amount;
+        
+        if (withOption === 'bank') {
+            // Direct transaction with bank
+            this.currentTransaction.step = 3;
+            this.showTransactionConfirmation();
+        } else {
+            // Player-to-player transaction
+            this.currentTransaction.step = 2;
+            this.currentTransaction.waitingForSecondPlayer = true;
+            
+            document.getElementById('transactionStep1').style.display = 'none';
+            document.getElementById('transactionStep2').style.display = 'block';
+            document.getElementById('nextStepBtn').style.display = 'none';
+        }
+    }
+
+    setSecondPlayer(player) {
+        this.currentTransaction.secondPlayer = player;
+        this.currentTransaction.waitingForSecondPlayer = false;
+        this.currentTransaction.step = 3;
+        this.showTransactionConfirmation();
+    }
+
+    showTransactionConfirmation() {
+        const { initiator, type, with: withOption, amount, secondPlayer } = this.currentTransaction;
+        
+        document.getElementById('transactionStep1').style.display = 'none';
+        document.getElementById('transactionStep2').style.display = 'none';
+        document.getElementById('transactionConfirmation').style.display = 'block';
+        document.getElementById('confirmTransactionBtn').style.display = 'inline-block';
+        
+        let summary = '';
+        if (withOption === 'bank') {
+            if (type === 'pay') {
+                summary = `<strong>${initiator.name}</strong> pays <span class="currency">₹${amount}</span> to the Bank`;
+            } else {
+                summary = `<strong>${initiator.name}</strong> receives <span class="currency">₹${amount}</span> from the Bank`;
+            }
+        } else {
+            if (type === 'pay') {
+                summary = `<strong>${initiator.name}</strong> pays <span class="currency">₹${amount}</span> to <strong>${secondPlayer.name}</strong>`;
+            } else {
+                summary = `<strong>${initiator.name}</strong> receives <span class="currency">₹${amount}</span> from <strong>${secondPlayer.name}</strong>`;
+            }
+        }
+        
+        document.getElementById('transactionSummary').innerHTML = summary;
+    }
+
+    confirmTransaction() {
+        const { initiator, type, with: withOption, amount, secondPlayer } = this.currentTransaction;
+        
+        // Create transaction record for undo
+        const transactionRecord = {
+            timestamp: Date.now(),
+            initiator: { ...initiator },
+            type,
+            with: withOption,
+            amount,
+            secondPlayer: secondPlayer ? { ...secondPlayer } : null,
+            balanceChanges: []
+        };
+        
+        if (withOption === 'bank') {
+            const oldBalance = initiator.balance;
+            if (type === 'pay') {
+                initiator.balance -= amount;
+            } else {
+                initiator.balance += amount;
+            }
+            transactionRecord.balanceChanges.push({
+                player: { ...initiator },
+                oldBalance,
+                newBalance: initiator.balance
+            });
+        } else {
+            // Player-to-player transaction
+            const initiatorOldBalance = initiator.balance;
+            const secondPlayerOldBalance = secondPlayer.balance;
+            
+            if (type === 'pay') {
+                initiator.balance -= amount;
+                secondPlayer.balance += amount;
+            } else {
+                initiator.balance += amount;
+                secondPlayer.balance -= amount;
+            }
+            
+            transactionRecord.balanceChanges.push(
+                {
+                    player: { ...initiator },
+                    oldBalance: initiatorOldBalance,
+                    newBalance: initiator.balance
+                },
+                {
+                    player: { ...secondPlayer },
+                    oldBalance: secondPlayerOldBalance,
+                    newBalance: secondPlayer.balance
+                }
+            );
+        }
+        
+        this.transactionHistory.push(transactionRecord);
+        this.currentTransaction = null;
+        
+        // Save and update UI
+        this.saveGameData();
+        this.updateUI();
+        
+        // Hide modal
+        const transactionModal = bootstrap.Modal.getInstance(document.getElementById('transactionModal'));
+        transactionModal.hide();
+        
+        this.showStatus('Transaction completed successfully!', 'success');
+        document.getElementById('undoBtn').disabled = false;
+    }
+
+    cancelTransaction() {
+        this.currentTransaction = null;
+        const transactionModal = bootstrap.Modal.getInstance(document.getElementById('transactionModal'));
+        transactionModal.hide();
+    }
+
+    undoLastTransaction() {
+        if (this.transactionHistory.length === 0) {
+            this.showStatus('No transactions to undo.', 'warning');
+            return;
+        }
+        
+        const lastTransaction = this.transactionHistory.pop();
+        
+        // Restore balances
+        lastTransaction.balanceChanges.forEach(change => {
+            const player = this.players.find(p => p.uid === change.player.uid);
+            if (player) {
+                player.balance = change.oldBalance;
+            }
+        });
+        
+        this.saveGameData();
+        this.updateUI();
+        this.showStatus('Last transaction undone successfully!', 'info');
+        
+        if (this.transactionHistory.length === 0) {
+            document.getElementById('undoBtn').disabled = true;
+        }
+    }
+
+    updateUI() {
+        if (this.gameState === 'playing') {
+            document.getElementById('gameDashboard').style.display = 'block';
+            this.updatePlayersTable();
+            this.updateChart();
+        } else {
+            document.getElementById('gameDashboard').style.display = 'none';
+        }
+    }
+
+    updatePlayersTable() {
+        const tbody = document.getElementById('playersTableBody');
+        tbody.innerHTML = '';
+        
+        this.players.forEach(player => {
+            const row = document.createElement('tr');
+            row.className = 'player-row';
+            row.innerHTML = `
+                <td><strong>${player.name}</strong></td>
+                <td><code>${player.uid}</code></td>
+                <td class="text-end"><span class="currency">₹${player.balance.toLocaleString()}</span></td>
+            `;
+            tbody.appendChild(row);
+        });
+    }
+
+    updateChart() {
+        const ctx = document.getElementById('balanceChart').getContext('2d');
+        
+        if (this.chart) {
+            this.chart.destroy();
+        }
+        
+        const data = {
+            labels: this.players.map(p => p.name),
+            datasets: [{
+                label: 'Balance (₹)',
+                data: this.players.map(p => p.balance),
+                backgroundColor: this.players.map((_, index) => {
+                    const colors = [
+                        'rgba(102, 126, 234, 0.8)',
+                        'rgba(118, 75, 162, 0.8)',
+                        'rgba(78, 205, 196, 0.8)',
+                        'rgba(255, 107, 107, 0.8)',
+                        'rgba(255, 193, 7, 0.8)',
+                        'rgba(40, 167, 69, 0.8)'
+                    ];
+                    return colors[index % colors.length];
+                }),
+                borderColor: this.players.map((_, index) => {
+                    const colors = [
+                        'rgba(102, 126, 234, 1)',
+                        'rgba(118, 75, 162, 1)',
+                        'rgba(78, 205, 196, 1)',
+                        'rgba(255, 107, 107, 1)',
+                        'rgba(255, 193, 7, 1)',
+                        'rgba(40, 167, 69, 1)'
+                    ];
+                    return colors[index % colors.length];
+                }),
+                borderWidth: 2,
+                borderRadius: 8,
+                borderSkipped: false,
+            }]
+        };
+        
+        this.chart = new Chart(ctx, {
+            type: 'bar',
+            data: data,
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        display: false
+                    }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        ticks: {
+                            callback: function(value) {
+                                return '₹' + value.toLocaleString();
+                            }
+                        }
+                    }
+                },
+                animation: {
+                    duration: 1000,
+                    easing: 'easeInOutQuart'
+                }
+            }
+        });
+    }
+
+    showStatus(message, type = 'info') {
+        const statusDiv = document.getElementById('statusMessage');
+        const icons = {
+            success: 'bi-check-circle',
+            warning: 'bi-exclamation-triangle',
+            error: 'bi-x-circle',
+            info: 'bi-info-circle'
+        };
+        
+        statusDiv.innerHTML = `<i class="bi ${icons[type]}"></i> ${message}`;
+        
+        // Add temporary color change
+        const originalClass = statusDiv.className;
+        statusDiv.className = `status-message bg-${type === 'error' ? 'danger' : type}`;
+        
+        setTimeout(() => {
+            statusDiv.className = originalClass;
+        }, 3000);
+    }
+
+    saveGameData() {
+        const gameData = {
+            gameState: this.gameState,
+            players: this.players,
+            transactionHistory: this.transactionHistory
+        };
+        localStorage.setItem('monopolyGameData', JSON.stringify(gameData));
+    }
+
+    loadGameData() {
+        try {
+            const saved = localStorage.getItem('monopolyGameData');
+            if (saved) {
+                const gameData = JSON.parse(saved);
+                this.gameState = gameData.gameState || 'idle';
+                this.players = gameData.players || [];
+                this.transactionHistory = gameData.transactionHistory || [];
+                
+                if (this.transactionHistory.length > 0) {
+                    document.getElementById('undoBtn').disabled = false;
+                }
+            }
+        } catch (error) {
+            console.error('Error loading game data:', error);
+            this.gameState = 'idle';
+            this.players = [];
+            this.transactionHistory = [];
+        }
+    }
 }
 
-function updateTable() {
-  const tbody = playerList.map(p => `<tr><td>${p.name}</td><td>₹${p.balance}</td></tr>`).join("");
-  $("#playerTableBody").html(tbody);
-}
-
-function saveToLocal() {
-  localStorage.setItem("playerList", JSON.stringify(playerList));
-  localStorage.setItem("transactionHistory", JSON.stringify(transactionHistory));
-}
-
-function loadFromLocal() {
-  const data = localStorage.getItem("playerList");
-  if (data) {
-    playerList = JSON.parse(data);
-  }
-
-  const txns = localStorage.getItem("transactionHistory");
-  if (txns) {
-    transactionHistory = JSON.parse(txns);
-  }
-
-  renderChart();
-  updateTable();
-}
+// Initialize the game
+let monopolyGame;
+document.addEventListener('DOMContentLoaded', () => {
+    monopolyGame = new MonopolyDashboard();
+});

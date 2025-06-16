@@ -1,84 +1,319 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Monopoly Game Dashboard</title>
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css">
-  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-  <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
-  <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Monopoly RFID Game Dashboard</title>
+    
+    <!-- Bootstrap CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- Bootstrap Icons -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css" rel="stylesheet">
+    
+    <style>
+        .game-header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 2rem 0;
+            border-radius: 0 0 20px 20px;
+            margin-bottom: 2rem;
+        }
+        
+        .balance-card {
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+            padding: 2rem;
+            margin-bottom: 2rem;
+            border: none;
+        }
+        
+        .player-table {
+            background: white;
+            border-radius: 15px;
+            overflow: hidden;
+            box-shadow: 0 5px 20px rgba(0,0,0,0.08);
+        }
+        
+        .btn-game {
+            background: linear-gradient(45deg, #667eea, #764ba2);
+            border: none;
+            border-radius: 25px;
+            padding: 12px 30px;
+            color: white;
+            font-weight: 600;
+            transition: all 0.3s ease;
+        }
+        
+        .btn-game:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(102, 126, 234, 0.3);
+            color: white;
+        }
+        
+        .btn-danger-custom {
+            background: linear-gradient(45deg, #ff6b6b, #ee5a52);
+            border: none;
+            border-radius: 25px;
+            padding: 12px 30px;
+            color: white;
+            font-weight: 600;
+            transition: all 0.3s ease;
+        }
+        
+        .btn-danger-custom:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(255, 107, 107, 0.3);
+            color: white;
+        }
+        
+        .status-message {
+            background: linear-gradient(45deg, #4ecdc4, #44a08d);
+            color: white;
+            padding: 1rem;
+            border-radius: 10px;
+            margin-top: 1rem;
+            text-align: center;
+            font-weight: 500;
+        }
+        
+        .modal-content {
+            border-radius: 20px;
+            border: none;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.2);
+        }
+        
+        .modal-header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border-radius: 20px 20px 0 0;
+            border: none;
+        }
+        
+        .currency {
+            color: #28a745;
+            font-weight: bold;
+        }
+        
+        .chart-container {
+            position: relative;
+            height: 400px;
+            margin-bottom: 2rem;
+        }
+        
+        .connection-status {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            z-index: 1050;
+        }
+        
+        .badge-connected {
+            background: linear-gradient(45deg, #28a745, #20c997);
+        }
+        
+        .badge-disconnected {
+            background: linear-gradient(45deg, #dc3545, #fd7e14);
+        }
+        
+        .card-tap-indicator {
+            animation: pulse 1.5s infinite;
+        }
+        
+        @keyframes pulse {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.05); }
+            100% { transform: scale(1); }
+        }
+        
+        .player-row:hover {
+            background-color: #f8f9fa;
+            transition: background-color 0.3s ease;
+        }
+    </style>
 </head>
-<body>
-<div class="container mt-4">
-  <div class="d-flex justify-content-between align-items-center mb-3">
-    <h2>Monopoly Game Dashboard</h2>
-    <button class="btn btn-primary" id="newGameBtn">New Game</button>
-  </div>
-  <canvas id="balanceChart" height="100"></canvas>
-  <table class="table table-bordered mt-3">
-    <thead><tr><th>Player</th><th>Balance (₹)</th></tr></thead>
-    <tbody id="playerTableBody"></tbody>
-  </table>
-  <div id="status" class="mt-3 fw-bold text-primary">Status: Waiting...</div>
-</div>
+<body class="bg-light">
+    <!-- Connection Status -->
+    <div class="connection-status">
+        <span id="connectionBadge" class="badge badge-disconnected">
+            <i class="bi bi-wifi-off"></i> Disconnected
+        </span>
+    </div>
 
-<!-- Modals -->
-<div class="modal fade" id="tapCardsModal" tabindex="-1">
-  <div class="modal-dialog"><div class="modal-content">
-    <div class="modal-header"><h5 class="modal-title">Tap Cards to Register Players</h5></div>
-    <div class="modal-body">
-      <ul id="cardUIDList" class="list-group"></ul>
+    <!-- Header -->
+    <div class="game-header">
+        <div class="container text-center">
+            <h1><i class="bi bi-house-door"></i> Monopoly RFID Dashboard</h1>
+            <p class="lead mb-0">Real-time player balance tracking with RFID integration</p>
+        </div>
     </div>
-    <div class="modal-footer">
-      <button class="btn btn-secondary" id="proceedToNames">Next</button>
-    </div>
-  </div></div>
-</div>
 
-<div class="modal fade" id="nameInputModal" tabindex="-1">
-  <div class="modal-dialog"><div class="modal-content">
-    <div class="modal-header"><h5 class="modal-title">Enter Player Names</h5></div>
-    <div class="modal-body" id="nameInputs"></div>
-    <div class="modal-footer">
-      <button class="btn btn-primary" id="startGameBtn">Start Game</button>
-    </div>
-  </div></div>
-</div>
+    <div class="container">
+        <!-- Game Controls -->
+        <div class="row justify-content-center mb-4">
+            <div class="col-auto">
+                <button id="newGameBtn" class="btn btn-game me-3">
+                    <i class="bi bi-play-circle"></i> New Game
+                </button>
+                <button id="undoBtn" class="btn btn-danger-custom" disabled>
+                    <i class="bi bi-arrow-counterclockwise"></i> Undo Last Transaction
+                </button>
+            </div>
+        </div>
 
-<div class="modal fade" id="transactionInitModal" tabindex="-1">
-  <div class="modal-dialog"><div class="modal-content">
-    <div class="modal-header"><h5 class="modal-title">Transaction Setup</h5></div>
-    <div class="modal-body">
-      <p id="initiatorName"></p>
-      <div class="form-check">
-        <input class="form-check-input" type="radio" name="txnType" value="pay" checked> Pay
-      </div>
-      <div class="form-check">
-        <input class="form-check-input" type="radio" name="txnType" value="receive"> Receive
-      </div>
-      <select class="form-select mt-2" id="txnTarget">
-        <option value="Bank">Bank</option>
-        <option value="Player">Player</option>
-      </select>
-      <input type="number" class="form-control mt-2" id="txnAmount" placeholder="Amount">
-    </div>
-    <div class="modal-footer">
-      <button class="btn btn-primary" id="confirmTxnSetup">Continue</button>
-    </div>
-  </div></div>
-</div>
+        <!-- Game Dashboard (Hidden initially) -->
+        <div id="gameDashboard" style="display: none;">
+            <!-- Balance Chart -->
+            <div class="balance-card">
+                <h3 class="text-center mb-4"><i class="bi bi-bar-chart"></i> Player Balances</h3>
+                <div class="chart-container">
+                    <canvas id="balanceChart"></canvas>
+                </div>
+            </div>
 
-<div class="modal fade" id="transactionConfirmModal" tabindex="-1">
-  <div class="modal-dialog"><div class="modal-content">
-    <div class="modal-header"><h5 class="modal-title">Confirm Transaction</h5></div>
-    <div class="modal-body" id="txnSummary"></div>
-    <div class="modal-footer">
-      <button class="btn btn-success" id="finalizeTxn">Confirm</button>
-    </div>
-  </div></div>
-</div>
+            <!-- Players Table -->
+            <div class="player-table">
+                <div class="table-responsive">
+                    <table class="table table-hover mb-0">
+                        <thead class="table-dark">
+                            <tr>
+                                <th><i class="bi bi-person"></i> Player</th>
+                                <th><i class="bi bi-credit-card"></i> RFID</th>
+                                <th class="text-end"><i class="bi bi-currency-rupee"></i> Balance</th>
+                            </tr>
+                        </thead>
+                        <tbody id="playersTableBody">
+                        </tbody>
+                    </table>
+                </div>
+            </div>
 
-<script src="app.js"></script>
+            <!-- Status Message -->
+            <div id="statusMessage" class="status-message">
+                <i class="bi bi-info-circle"></i> Tap an RFID card to start a transaction
+            </div>
+        </div>
+    </div>
+
+    <!-- New Game Setup Modal -->
+    <div class="modal fade" id="setupModal" tabindex="-1" data-bs-backdrop="static" data-bs-keyboard="false">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="bi bi-gear"></i> Game Setup</h5>
+                </div>
+                <div class="modal-body">
+                    <!-- Step 1: Card Registration -->
+                    <div id="cardRegistration">
+                        <h6><i class="bi bi-credit-card"></i> Step 1: Register Player Cards</h6>
+                        <p>Tap RFID cards one by one. Each tap will register a new player.</p>
+                        
+                        <div class="text-center mb-3">
+                            <div class="card-tap-indicator">
+                                <i class="bi bi-credit-card" style="font-size: 3rem; color: #667eea;"></i>
+                            </div>
+                            <p class="mt-2">Waiting for card tap...</p>
+                        </div>
+                        
+                        <div id="registeredCards" class="mt-3"></div>
+                        
+                        <div class="text-center mt-4">
+                            <button id="proceedToNames" class="btn btn-game" disabled>
+                                <i class="bi bi-arrow-right"></i> Proceed to Names
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Step 2: Player Names -->
+                    <div id="playerNames" style="display: none;">
+                        <h6><i class="bi bi-person-plus"></i> Step 2: Enter Player Names</h6>
+                        <p>Enter custom names for each registered card:</p>
+                        <div id="nameInputs"></div>
+                    </div>
+                </div>
+                <div class="modal-footer" id="setupFooter">
+                    <button id="startGameBtn" class="btn btn-game" style="display: none;">
+                        <i class="bi bi-play"></i> Start Game
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Transaction Modal -->
+    <div class="modal fade" id="transactionModal" tabindex="-1" data-bs-backdrop="static" data-bs-keyboard="false">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="bi bi-cash-coin"></i> New Transaction</h5>
+                </div>
+                <div class="modal-body">
+                    <div id="transactionStep1">
+                        <h6 id="transactionPlayerName"></h6>
+                        
+                        <div class="mb-3">
+                            <label class="form-label">Transaction Type:</label>
+                            <div class="btn-group w-100" role="group">
+                                <input type="radio" class="btn-check" name="transactionType" id="payOption" value="pay">
+                                <label class="btn btn-outline-danger" for="payOption">
+                                    <i class="bi bi-arrow-down-circle"></i> Pay
+                                </label>
+                                
+                                <input type="radio" class="btn-check" name="transactionType" id="receiveOption" value="receive">
+                                <label class="btn btn-outline-success" for="receiveOption">
+                                    <i class="bi bi-arrow-up-circle"></i> Receive
+                                </label>
+                            </div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">Transaction With:</label>
+                            <div class="btn-group w-100" role="group">
+                                <input type="radio" class="btn-check" name="transactionWith" id="bankOption" value="bank">
+                                <label class="btn btn-outline-primary" for="bankOption">
+                                    <i class="bi bi-bank"></i> Bank
+                                </label>
+                                
+                                <input type="radio" class="btn-check" name="transactionWith" id="playerOption" value="player">
+                                <label class="btn btn-outline-info" for="playerOption">
+                                    <i class="bi bi-person"></i> Another Player
+                                </label>
+                            </div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="transactionAmount" class="form-label">Amount (₹):</label>
+                            <input type="number" class="form-control" id="transactionAmount" min="1" placeholder="Enter amount">
+                        </div>
+                    </div>
+
+                    <div id="transactionStep2" style="display: none;">
+                        <div class="text-center">
+                            <div class="card-tap-indicator">
+                                <i class="bi bi-credit-card" style="font-size: 3rem; color: #667eea;"></i>
+                            </div>
+                            <p class="mt-2">Waiting for second player's card tap...</p>
+                        </div>
+                    </div>
+
+                    <div id="transactionConfirmation" style="display: none;">
+                        <h6>Confirm Transaction:</h6>
+                        <div id="transactionSummary" class="bg-light p-3 rounded"></div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" id="cancelTransaction">Cancel</button>
+                    <button type="button" class="btn btn-game" id="nextStepBtn" disabled>Next</button>
+                    <button type="button" class="btn btn-success" id="confirmTransactionBtn" style="display: none;">Confirm</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+    <script src="app.js"></script>
 </body>
 </html>
