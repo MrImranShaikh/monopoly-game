@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Player Info - Monopoly RFID</title>
+    
+    <!-- Bootstrap CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- Bootstrap Icons -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css">
+    
+    <style>
+        body {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px 0;
+        }
+        .player-container {
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+            overflow: hidden;
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        .header {
+            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+        .player-card {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border-radius: 15px;
+            padding: 30px;
+            margin: 20px;
+            text-align: center;
+        }
+        .balance-display {
+            font-size: 3rem;
+            font-weight: bold;
+            color: #28a745;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.1);
+        }
+        .transaction-item {
+            border-left: 4px solid #007bff;
+            padding-left: 15px;
+            margin-bottom: 15px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            padding: 15px;
+        }
+        .transaction-item.pay {
+            border-left-color: #dc3545;
+        }
+        .transaction-item.receive {
+            border-left-color: #28a745;
+        }
+        .badge {
+            padding: 8px 12px;
+            border-radius: 20px;
+            font-size: 0.9em;
+            font-weight: 500;
+        }
+        .badge-connected {
+            background-color: #28a745;
+            color: white;
+        }
+        .badge-disconnected {
+            background-color: #dc3545;
+            color: white;
+        }
+        .back-btn {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            z-index: 1000;
+        }
+        .refresh-btn {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            z-index: 1000;
+        }
+    </style>
+</head>
+<body>
+    <!-- <button class="btn btn-primary back-btn" onclick="window.location.href='monopoly-dashboard.html'">
+        <i class="bi bi-arrow-left"></i> Back to Dashboard
+    </button>
+    
+    <button class="btn btn-success refresh-btn" onclick="loadPlayerData()">
+        <i class="bi bi-arrow-clockwise"></i> Refresh
+    </button> -->
+
+    <div class="container">
+        <div class="player-container">
+            <!-- Header -->
+            <div class="header">
+                <h1><i class="bi bi-person-circle"></i> Player Information</h1>
+                <p class="mb-0">Real-time player data and transaction history</p>
+                <div class="mt-3">
+                    <span id="connectionBadge" class="badge badge-disconnected">
+                        <i class="bi bi-wifi-off"></i> Connecting...
+                    </span>
+                </div>
+            </div>
+
+            <!-- Player Not Found -->
+            <div id="playerNotFound" class="text-center p-5" style="display: none;">
+                <i class="bi bi-exclamation-triangle text-warning" style="font-size: 4rem;"></i>
+                <h3 class="mt-3">Player Not Found</h3>
+                <p class="text-muted">No player found with the specified UID or no active game.</p>
+                <button class="btn btn-primary" onclick="window.location.href='monopoly-dashboard.html'">
+                    Go to Dashboard
+                </button>
+            </div>
+
+            <!-- Player Info -->
+            <div id="playerInfo" style="display: none;">
+                <!-- Player Card -->
+                <div id="playerCard" class="player-card">
+                    <div class="row align-items-center">
+                        <div class="col-md-6">
+                            <h2 id="playerName">Player Name</h2>
+                            <p class="mb-0">Card No: <code id="playerUID">000000000</code></p>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="balance-display" id="playerBalance">₹0</div>
+                            <small>Current Balance</small>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Stats Cards -->
+                <div class="row p-4">
+                    <div class="col-md-4">
+                        <div class="card text-center">
+                            <div class="card-body">
+                                <i class="bi bi-arrow-up text-success" style="font-size: 2rem;"></i>
+                                <h4 class="mt-2" id="totalReceived">₹0</h4>
+                                <small class="text-muted">Total Received</small>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="card text-center">
+                            <div class="card-body">
+                                <i class="bi bi-arrow-down text-danger" style="font-size: 2rem;"></i>
+                                <h4 class="mt-2" id="totalPaid">₹0</h4>
+                                <small class="text-muted">Total Paid</small>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="card text-center">
+                            <div class="card-body">
+                                <i class="bi bi-activity text-primary" style="font-size: 2rem;"></i>
+                                <h4 class="mt-2" id="transactionCount">0</h4>
+                                <small class="text-muted">Transactions</small>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Transaction History -->
+                <div class="p-4">
+                    <h4><i class="bi bi-clock-history"></i> Transaction History</h4>
+                    <div id="transactionHistory">
+                        <div class="text-center text-muted p-4">
+                            <i class="bi bi-inbox"></i>
+                            <p class="mt-2">No transactions yet</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://unpkg.com/mqtt@4.3.7/dist/mqtt.min.js"></script>
+    <script>
+    class PlayerInfo {
+        constructor() {
+            this.mqtt = null;
+            this.playerUID = null;
+            this.player = null;
+            this.transactionHistory = [];
+            this.init();
+        }
+
+        init() {
+            const urlParams = new URLSearchParams(window.location.search);
+            this.playerUID = urlParams.get('uid');
+
+            if (!this.playerUID) {
+                this.showPlayerNotFound();
+                return;
+            }
+
+            this.player = {
+                uid: this.playerUID,
+                name: '',
+                balance: 1500, // initial balance if needed
+            };
+
+            this.connectMQTT();
+        }
+
+        connectMQTT() {
+            console.log('Connecting to MQTT...');
+            this.updateConnectionStatus(false);
+
+            try {
+                this.mqtt = mqtt.connect('wss://broker.hivemq.com:8884/mqtt', {
+                    clientId: 'viewer_' + Math.random().toString(36).substr(2, 9),
+                    clean: true,
+                    connectTimeout: 4000,
+                    reconnectPeriod: 1000,
+                });
+
+                this.mqtt.on('connect', () => {
+                    console.log('MQTT Connected');
+                    this.updateConnectionStatus(true);
+                    this.mqtt.subscribe('monopoly/transaction', (err) => {
+                        if (err) console.error('MQTT subscribe error:', err);
+                    });
+                });
+
+                this.mqtt.on('offline', () => this.updateConnectionStatus(false));
+                this.mqtt.on('error', (err) => console.error('MQTT Error:', err));
+
+                this.mqtt.on('message', (topic, message) => {
+                    try {
+                        const txn = JSON.parse(message.toString());
+
+                        const involved =
+                            txn.initiator?.uid === this.playerUID ||
+                            txn.secondPlayer?.uid === this.playerUID;
+
+                        if (!involved) return;
+
+                        this.transactionHistory.push(txn);
+
+                        // Try to extract the name
+                        if (!this.player.name) {
+                            if (txn.initiator?.uid === this.playerUID) this.player.name = txn.initiator.name;
+                            else if (txn.secondPlayer?.uid === this.playerUID) this.player.name = txn.secondPlayer.name;
+                        }
+
+                        // Recalculate balance
+                        this.player.balance = this.calculateBalance(this.transactionHistory);
+
+                        this.displayPlayerInfo();
+                    } catch (e) {
+                        console.error("Invalid transaction JSON:", e);
+                    }
+                });
+            } catch (e) {
+                console.error('MQTT Connection Failed:', e);
+                this.updateConnectionStatus(false);
+            }
+        }
+
+        calculateBalance(transactions) {
+            const uid = this.playerUID;
+            let latestBalance = 1500; // default starting balance
+
+            transactions.forEach(txn => {
+                if (!Array.isArray(txn.balanceChanges)) return;
+
+                const playerChange = txn.balanceChanges.find(change => change.player.uid === uid);
+
+                if (playerChange) {
+                    latestBalance = playerChange.newBalance;
+                }
+            });
+
+            return latestBalance;
+        }
+
+        updateConnectionStatus(connected) {
+            const badge = document.getElementById('connectionBadge');
+            badge.className = connected ? 'badge badge-connected' : 'badge badge-disconnected';
+            badge.innerHTML = connected
+                ? '<i class="bi bi-wifi"></i> Connected'
+                : '<i class="bi bi-wifi-off"></i> Disconnected';
+        }
+
+        displayPlayerInfo() {
+            document.getElementById('playerNotFound').style.display = 'none';
+            document.getElementById('playerInfo').style.display = 'block';
+
+            document.getElementById('playerName').textContent = this.player.name || '(loading...)';
+            document.getElementById('playerUID').textContent = this.player.uid;
+            document.getElementById('playerBalance').textContent = `₹${this.player.balance.toLocaleString()}`;
+
+            const stats = this.calculateStats(this.transactionHistory);
+            document.getElementById('totalReceived').textContent = `₹${stats.totalReceived.toLocaleString()}`;
+            document.getElementById('totalPaid').textContent = `₹${stats.totalPaid.toLocaleString()}`;
+            document.getElementById('transactionCount').textContent = stats.transactionCount;
+
+            this.displayTransactionHistory(this.transactionHistory);
+        }
+
+        calculateStats(transactions) {
+            let totalReceived = 0;
+            let totalPaid = 0;
+
+            transactions.forEach(txn => {
+                const isInitiator = txn.initiator.uid === this.playerUID;
+                const isReceiver = txn.secondPlayer?.uid === this.playerUID;
+
+                if (txn.with === 'bank') {
+                    if (txn.type === 'receive' && isInitiator) totalReceived += txn.amount;
+                    if (txn.type === 'pay' && isInitiator) totalPaid += txn.amount;
+                } else {
+                    if (txn.type === 'pay') {
+                        if (isInitiator) totalPaid += txn.amount;
+                        if (isReceiver) totalReceived += txn.amount;
+                    } else if (txn.type === 'receive') {
+                        if (isInitiator) totalReceived += txn.amount;
+                        if (isReceiver) totalPaid += txn.amount;
+                    }
+                }
+            });
+
+            return {
+                totalReceived,
+                totalPaid,
+                transactionCount: transactions.length
+            };
+        }
+
+        displayTransactionHistory(transactions) {
+            const container = document.getElementById('transactionHistory');
+
+            if (transactions.length === 0) {
+                container.innerHTML = `
+                    <div class="text-center text-muted p-4">
+                        <i class="bi bi-inbox"></i>
+                        <p class="mt-2">No transactions yet</p>
+                    </div>`;
+                return;
+            }
+
+            container.innerHTML = '';
+            transactions.slice(-10).reverse().forEach(txn => {
+                const isInitiator = txn.initiator.uid === this.playerUID;
+                let description = '', icon = '', type = '', otherParty = '';
+
+                if (txn.with === 'bank') {
+                    if (txn.type === 'pay') {
+                        description = `Paid ₹${txn.amount.toLocaleString()} to Bank`;
+                        icon = 'bi-arrow-down text-danger';
+                        type = 'pay';
+                    } else {
+                        description = `Received ₹${txn.amount.toLocaleString()} from Bank`;
+                        icon = 'bi-arrow-up text-success';
+                        type = 'receive';
+                    }
+                } else {
+                    otherParty = isInitiator ? txn.secondPlayer.name : txn.initiator.name;
+
+                    if ((isInitiator && txn.type === 'pay') || (!isInitiator && txn.type === 'receive')) {
+                        description = `Paid ₹${txn.amount.toLocaleString()} to ${otherParty}`;
+                        icon = 'bi-arrow-down text-danger';
+                        type = 'pay';
+                    } else {
+                        description = `Received ₹${txn.amount.toLocaleString()} from ${otherParty}`;
+                        icon = 'bi-arrow-up text-success';
+                        type = 'receive';
+                    }
+                }
+
+                const div = document.createElement('div');
+                div.className = `transaction-item ${type}`;
+                div.innerHTML = `
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div><i class="bi ${icon}"></i> <strong class="ms-2">${description}</strong></div>
+                        <small class="text-muted">${new Date(txn.timestamp).toLocaleString()}</small>
+                    </div>
+                `;
+
+                container.appendChild(div);
+            });
+        }
+
+        showPlayerNotFound() {
+            document.getElementById('playerNotFound').style.display = 'block';
+            document.getElementById('playerInfo').style.display = 'none';
+        }
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+        window.playerInfoApp = new PlayerInfo();
+    });
+</script>
+
+</body>
+</html>

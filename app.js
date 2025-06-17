@@ -427,7 +427,7 @@ class MonopolyDashboard {
         
         this.transactionHistory.push(transactionRecord);
         this.currentTransaction = null;
-        
+        this.mqtt.publish('monopoly/transaction', JSON.stringify(transactionRecord));
         // Save and update UI
         this.saveGameData();
         this.updateUI();
