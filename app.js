@@ -1,3 +1,4 @@
+
 class MonopolyDashboard {
     constructor() {
         this.mqtt = null;
@@ -54,7 +55,7 @@ class MonopolyDashboard {
         });
 
         // Transaction form changes
-        document.querySelectorAll('input[name="transactionType"], input[name="transactionWith"]').forEach(radio => {
+        document.querySelectorAll('input[name="transactionType"]').forEach(radio => {
             radio.addEventListener('change', () => {
                 this.validateTransactionForm();
             });
@@ -163,15 +164,20 @@ class MonopolyDashboard {
         }
 
         if (!this.currentTransaction) {
-            // Start new transaction
-            this.startTransaction(player);
-        } else if (this.currentTransaction.step === 2 && this.currentTransaction.waitingForSecondPlayer) {
-            // Second player for player-to-player transaction
-            if (uid === this.currentTransaction.initiator.uid) {
-                this.showStatus('Cannot select the same player twice!', 'warning');
-                return;
+            this.showStatus('Click on a player\'s balance box to start a transaction.', 'info');
+            return;
+        }
+
+        // Handle card tap based on transaction state
+        if (this.currentTransaction.waitingForCardTap) {
+            if (this.currentTransaction.type === 'pay-bank' || this.currentTransaction.type === 'pay-player') {
+                // For all pay transactions, verify the paying player taps their card
+                if (uid === this.currentTransaction.initiator.uid) {
+                    this.confirmTransaction();
+                } else {
+                    this.showStatus('Wrong card! The paying player must tap their card to confirm payment.', 'warning');
+                }
             }
-            this.setSecondPlayer(player);
         }
     }
 
@@ -274,18 +280,17 @@ class MonopolyDashboard {
         
         // Show dashboard
         this.updateUI();
-        this.showStatus('Game started! Each player has ₹1500. Tap a card to begin transactions.', 'success');
+        this.showStatus('Game started! Each player has ₹1500. Click on a player\'s balance box to begin transactions.', 'success');
     }
 
-    startTransaction(player) {
+    startTransactionFromBalanceBox(player) {
         this.currentTransaction = {
             initiator: player,
             step: 1,
             type: null,
-            with: null,
             amount: null,
             secondPlayer: null,
-            waitingForSecondPlayer: false
+            waitingForCardTap: false
         };
         
         this.currentAmount = 0;
@@ -293,14 +298,15 @@ class MonopolyDashboard {
         
         document.getElementById('transactionPlayerName').textContent = `Player: ${player.name}`;
         document.getElementById('transactionStep1').style.display = 'block';
+        document.getElementById('playerSelectionStep').style.display = 'none';
         document.getElementById('transactionStep2').style.display = 'none';
+        document.getElementById('bankReceiveConfirmation').style.display = 'none';
         document.getElementById('transactionConfirmation').style.display = 'none';
         document.getElementById('nextStepBtn').style.display = 'inline-block';
         document.getElementById('confirmTransactionBtn').style.display = 'none';
         
         // Reset form
         document.querySelectorAll('input[name="transactionType"]').forEach(radio => radio.checked = false);
-        document.querySelectorAll('input[name="transactionWith"]').forEach(radio => radio.checked = false);
         document.getElementById('nextStepBtn').disabled = true;
         
         const transactionModal = new bootstrap.Modal(document.getElementById('transactionModal'));
@@ -309,107 +315,121 @@ class MonopolyDashboard {
 
     validateTransactionForm() {
         const type = document.querySelector('input[name="transactionType"]:checked');
-        const withOption = document.querySelector('input[name="transactionWith"]:checked');
         
-        const isValid = type && withOption && this.currentAmount > 0;
+        const isValid = type && this.currentAmount > 0;
         document.getElementById('nextStepBtn').disabled = !isValid;
     }
 
     nextTransactionStep() {
         const type = document.querySelector('input[name="transactionType"]:checked').value;
-        const withOption = document.querySelector('input[name="transactionWith"]:checked').value;
         
         this.currentTransaction.type = type;
-        this.currentTransaction.with = withOption;
         this.currentTransaction.amount = this.currentAmount;
         
-        if (withOption === 'bank') {
-            // Direct transaction with bank
-            this.currentTransaction.step = 3;
-            this.showTransactionConfirmation();
-        } else {
-            // Player-to-player transaction
-            this.currentTransaction.step = 2;
-            this.currentTransaction.waitingForSecondPlayer = true;
-            
-            document.getElementById('transactionStep1').style.display = 'none';
-            document.getElementById('transactionStep2').style.display = 'block';
-            document.getElementById('nextStepBtn').style.display = 'none';
+        if (type === 'receive-bank') {
+            // Bank receive - no card tap required, direct confirmation
+            this.showBankReceiveConfirmation();
+        } else if (type === 'pay-bank') {
+            // Pay bank - require card tap
+            this.showCardTapStep(`${this.currentTransaction.initiator.name} must tap their card to confirm payment to bank`);
+            this.currentTransaction.waitingForCardTap = true;
+        } else if (type === 'pay-player') {
+            // Pay player - show player selection first
+            this.showPlayerSelection();
         }
     }
 
-    setSecondPlayer(player) {
-        this.currentTransaction.secondPlayer = player;
-        this.currentTransaction.waitingForSecondPlayer = false;
-        this.currentTransaction.step = 3;
-        this.showTransactionConfirmation();
-    }
-
-    showTransactionConfirmation() {
-        const { initiator, type, with: withOption, amount, secondPlayer } = this.currentTransaction;
+    showBankReceiveConfirmation() {
+        const { initiator, amount } = this.currentTransaction;
         
         document.getElementById('transactionStep1').style.display = 'none';
-        document.getElementById('transactionStep2').style.display = 'none';
-        document.getElementById('transactionConfirmation').style.display = 'block';
+        document.getElementById('bankReceiveConfirmation').style.display = 'block';
         document.getElementById('nextStepBtn').style.display = 'none';
         document.getElementById('confirmTransactionBtn').style.display = 'inline-block';
         
-        let summary = '';
-        if (withOption === 'bank') {
-            if (type === 'pay') {
-                summary = `<strong>${initiator.name}</strong> pays <span class="currency">₹${amount.toLocaleString()}</span> to the Bank`;
-            } else {
-                summary = `<strong>${initiator.name}</strong> receives <span class="currency">₹${amount.toLocaleString()}</span> from the Bank`;
-            }
-        } else {
-            if (type === 'pay') {
-                summary = `<strong>${initiator.name}</strong> pays <span class="currency">₹${amount.toLocaleString()}</span> to <strong>${secondPlayer.name}</strong>`;
-            } else {
-                summary = `<strong>${initiator.name}</strong> receives <span class="currency">₹${amount.toLocaleString()}</span> from <strong>${secondPlayer.name}</strong>`;
-            }
-        }
+        document.getElementById('bankReceiveSummary').innerHTML = `
+            <p><strong>${initiator.name}</strong> will receive</p>
+            <div class="amount">₹${amount.toLocaleString()}</div>
+            <p>from the Bank</p>
+        `;
+    }
+
+    showPlayerSelection() {
+        const { initiator } = this.currentTransaction;
         
-        document.getElementById('transactionSummary').innerHTML = summary;
+        document.getElementById('transactionStep1').style.display = 'none';
+        document.getElementById('playerSelectionStep').style.display = 'block';
+        document.getElementById('nextStepBtn').style.display = 'none';
+        
+        const container = document.getElementById('playerSelectionButtons');
+        container.innerHTML = '';
+        
+        const availablePlayers = this.players.filter(p => p.uid !== initiator.uid);
+        
+        availablePlayers.forEach(player => {
+            const button = document.createElement('button');
+            button.className = 'player-select-btn';
+            button.innerHTML = `
+                <div>${player.name}</div>
+                <div>₹${player.balance.toLocaleString()}</div>
+            `;
+            button.addEventListener('click', () => {
+                this.selectPlayerForTransaction(player);
+            });
+            container.appendChild(button);
+        });
+    }
+
+    selectPlayerForTransaction(selectedPlayer) {
+        this.currentTransaction.secondPlayer = selectedPlayer;
+        
+        // For pay to player, the paying player (initiator) must tap their card
+        this.showCardTapStep(`${this.currentTransaction.initiator.name} must tap their card to confirm payment`);
+        this.currentTransaction.waitingForCardTap = true;
+    }
+
+    showCardTapStep(message) {
+        document.getElementById('transactionStep1').style.display = 'none';
+        document.getElementById('playerSelectionStep').style.display = 'none';
+        document.getElementById('transactionStep2').style.display = 'block';
+        document.getElementById('cardTapMessage').textContent = message;
     }
 
     confirmTransaction() {
-        const { initiator, type, with: withOption, amount, secondPlayer } = this.currentTransaction;
+        const { initiator, type, amount, secondPlayer } = this.currentTransaction;
         
         // Create transaction record for undo
         const transactionRecord = {
             timestamp: Date.now(),
             initiator: { ...initiator },
             type,
-            with: withOption,
             amount,
             secondPlayer: secondPlayer ? { ...secondPlayer } : null,
             balanceChanges: []
         };
         
-        if (withOption === 'bank') {
+        if (type === 'receive-bank') {
             const oldBalance = initiator.balance;
-            if (type === 'pay') {
-                initiator.balance -= amount;
-            } else {
-                initiator.balance += amount;
-            }
+            initiator.balance += amount;
             transactionRecord.balanceChanges.push({
                 player: { ...initiator },
                 oldBalance,
                 newBalance: initiator.balance
             });
-        } else {
-            // Player-to-player transaction
+        } else if (type === 'pay-bank') {
+            const oldBalance = initiator.balance;
+            initiator.balance -= amount;
+            transactionRecord.balanceChanges.push({
+                player: { ...initiator },
+                oldBalance,
+                newBalance: initiator.balance
+            });
+        } else if (type === 'pay-player') {
             const initiatorOldBalance = initiator.balance;
             const secondPlayerOldBalance = secondPlayer.balance;
             
-            if (type === 'pay') {
-                initiator.balance -= amount;
-                secondPlayer.balance += amount;
-            } else {
-                initiator.balance += amount;
-                secondPlayer.balance -= amount;
-            }
+            initiator.balance -= amount;
+            secondPlayer.balance += amount;
             
             transactionRecord.balanceChanges.push(
                 {
@@ -427,6 +447,7 @@ class MonopolyDashboard {
         
         this.transactionHistory.push(transactionRecord);
         this.currentTransaction = null;
+        
         this.mqtt.publish('monopoly/transaction', JSON.stringify(transactionRecord));
         // Save and update UI
         this.saveGameData();
@@ -474,11 +495,30 @@ class MonopolyDashboard {
     updateUI() {
         if (this.gameState === 'playing') {
             document.getElementById('gameDashboard').style.display = 'block';
+            this.updatePlayerBalanceBoxes();
             this.updatePlayersTable();
             this.updateChart();
         } else {
             document.getElementById('gameDashboard').style.display = 'none';
         }
+    }
+
+    updatePlayerBalanceBoxes() {
+        const container = document.getElementById('playerBalanceBoxes');
+        container.innerHTML = '';
+        
+        this.players.forEach(player => {
+            const box = document.createElement('div');
+            box.className = 'player-balance-box';
+            box.innerHTML = `
+                <div class="player-name">${player.name}</div>
+                <div class="balance-amount">₹${player.balance.toLocaleString()}</div>
+            `;
+            box.addEventListener('click', () => {
+                this.startTransactionFromBalanceBox(player);
+            });
+            container.appendChild(box);
+        });
     }
 
     updatePlayersTable() {
@@ -511,23 +551,23 @@ class MonopolyDashboard {
                 data: this.players.map(p => p.balance),
                 backgroundColor: this.players.map((_, index) => {
                     const colors = [
-                        'rgba(102, 126, 234, 0.8)',
-                        'rgba(118, 75, 162, 0.8)',
-                        'rgba(78, 205, 196, 0.8)',
-                        'rgba(255, 107, 107, 0.8)',
-                        'rgba(255, 193, 7, 0.8)',
-                        'rgba(40, 167, 69, 0.8)'
+                        '#667eea',
+                        '#764ba2',
+                        '#4ecdc4',
+                        '#ff6b6b',
+                        '#ffc107',
+                        '#28a745'
                     ];
                     return colors[index % colors.length];
                 }),
                 borderColor: this.players.map((_, index) => {
                     const colors = [
-                        'rgba(102, 126, 234, 1)',
-                        'rgba(118, 75, 162, 1)',
-                        'rgba(78, 205, 196, 1)',
-                        'rgba(255, 107, 107, 1)',
-                        'rgba(255, 193, 7, 1)',
-                        'rgba(40, 167, 69, 1)'
+                        '#5a6fd8',
+                        '#6a4190',
+                        '#44b8b0',
+                        '#ff5252',
+                        '#e6ac00',
+                        '#1e7e34'
                     ];
                     return colors[index % colors.length];
                 }),
@@ -643,11 +683,3 @@ let monopolyGame;
 document.addEventListener('DOMContentLoaded', () => {
     monopolyGame = new MonopolyDashboard();
 });
-
-if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => {
-    navigator.serviceWorker.register('service-worker.js')
-      .then(reg => console.log("SW registered!", reg))
-      .catch(err => console.error("SW registration failed:", err));
-  });
-}
